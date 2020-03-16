@@ -14,8 +14,8 @@ uint8_t winY = 0;
 uint8_t cursorX = 0;
 uint8_t cursorY = 0;
 
-uint8_t tileMap[32][8];					//Set character screen memory. Always 8 characters high, but up to 32 wide if in "hi res" mode
-uint8_t menuMap[8][16];					//The memory map for menus. Separate from terminal tile map so they don't overwrite each other
+//uint8_t tileMap[32][8];					//Set character screen memory. Always 8 characters high, but up to 32 wide if in "hi res" mode
+uint8_t menuMap[8][32];					//The memory map for menus. Separate from terminal tile map so they don't overwrite each other
 uint8_t fileName[13];
 
 uint8_t cursorStatus = 1;					//If cursor is on or not
@@ -47,7 +47,7 @@ uint8_t dPadBounce = 0;						//The debounce clear bit for each button
 uint8_t rebootFlag = 0;						//Set this so system always starts in reboot mode
 
 uint8_t displayMode = 1;						//0 = terminal
-uint8_t whichMenu = 1;							//Which menu we are in if in menu mode (such as SD load, RAM dump, setting etc)
+uint8_t whichMenu = 0x81;						//Which menu we are in if in menu mode (such as SD load, RAM dump, setting etc)
 
 uint8_t controls;
 
@@ -57,10 +57,6 @@ uint8_t charSetOffset = 32;					//ASCII ofset memory pointer. 0 for 8x8 font, 32
 
 #define showTerminal 0
 #define showMenu 	 1
-
-uint8_t menuAnimate = 0;
-uint8_t menuAnimateRowT = 8;
-uint8_t menuAnimateRowM = 0;
 
 uint8_t menuX = 0;					//Menu cursors
 uint8_t menuY = 0;
@@ -76,9 +72,9 @@ void setup() {
 	Serial1.begin(115200);					//Start hardware UART
 	UCSR1B &= ~(1 << 3);  				//Disable transmit on hardware UART (RX only, for example external serial keyboard)
 
-	Wire.begin();							// I2C Init
+	Wire.begin();							// I2C init
 	
-	OLEDbegin(SSD1306_SWITCHCAPVCC, 0x3C);
+	OLEDbegin(SSD1306_SWITCHCAPVCC, 0x3C);	//OLED init
 	
 	TWBR = 6;						//Change prescaler to increase I2C speed to max of 400KHz
 
@@ -97,29 +93,19 @@ void setup() {
 
 	analogWrite(13, 128);			//bootstrap high speed clock
 
-	OCR4A = 4;
+	OCR4A = 4;						//Setup high speed fast clock to drive Z80
 	OCR4C = 6;
 	PLLFRQ = B01111010;
 	TCCR4B = B00000001;
 	TCCR4A = B10000010;
 
-	pinMode(11, INPUT);			//Upper nibble of data bus
-	pinMode(10, INPUT);
-	pinMode(9, INPUT);
-	pinMode(8, INPUT);
-
-	pinMode(A0, INPUT);			//Lower nibble of data bus
-	pinMode(A1, INPUT);
-	pinMode(A2, INPUT);
-	pinMode(A3, INPUT);
+	dataHiZ();
 
 	addressRelease();
 
 	pinMode(atmelSelect , INPUT);			//Atmel chip select
 
 	textln("Z80 NOTE by Ben Heck");
-	display4x8(8);
-	delay(500);
 	
 	if (!SD.begin(4)) {
 		text("SD card boot FAIL");
@@ -133,10 +119,6 @@ void setup() {
 
 	attachInterrupt(digitalPinToInterrupt(atmelSelect), access, FALLING); 		//Setup interrupt vector for when Z80 sends bytes to MCU
 
-	whichMenu = 0x80;				//Set menu 0, with MSB set as flag that menu needs to be drawn
-	
-	displayModeChangeTo(showMenu, 1);	
-	
 }
 
 void loop() {
@@ -156,52 +138,20 @@ void loop() {
 		rebootFlag = 0;
 	}
 
-	if (cursorStatus) {
-		if (++blink == 18) {
-			tileMap[cursorX][cursorY] = 95;
-		}
-		if (blink == 36) {
-			blink = 0;
-			tileMap[cursorX][cursorY] = 0;
-		}	
-	}
-
-	display4x8(menuAnimateRowT);		
-	displayMenu(menuAnimateRowM);
-
-	switch(menuAnimate) {
-	
-		case 1:
-			menuAnimateRowM++;
-			if (--menuAnimateRowT == 0) {
-				menuAnimate = 0;
-			}
-		break;
-		
-		case 2:
-			menuAnimateRowM--;
-			if (++menuAnimateRowT == 8) {
-				menuAnimate = 0;
-			}			
-		break;
-	
-	}
-
 	controls = getButtons();
 
-	if (buttonMenu() and !menuAnimate) {
+	if (buttonMenu()) {				//Swap between terminal and menu
 		if (displayMode == showTerminal) {
-			displayModeChangeTo(showMenu, 1);
+			displayModeChangeTo(showMenu);
 		}
 		else {
-			displayModeChangeTo(showTerminal, 1);
+			displayModeChangeTo(showTerminal);
 		}
 	}
 
 	if (displayMode == showMenu) {
 
-		switch(whichMenu & 0x7F) {				//The top bit is set when changing menus and tells the system to redraw new menu
-			
+		switch(whichMenu & 0x7F) {				//The top bit is set when changing menus and tells the system to redraw new menu			
 			case 0:
 				BASICmenu();
 			break;		
@@ -213,13 +163,27 @@ void loop() {
 			break;			
 			case 3:
 				settingsMenu();			
-			break;	
-			
+			break;			
 		}
-
+		
+		displayMenu(8);
 		
 	}
+	else {
+		if (cursorStatus) {
+			if (++blink == 18) {
+				menuMap[cursorY][cursorX] = 95;
+			}
+			if (blink == 36) {
+				blink = 0;
+				menuMap[cursorY][cursorX] = 0;
+			}	
+		}
+		
+		display4x8(8);	
+	}
 
+	
 	if (dLeft() and whichMenu > 0) {
 	
 		whichMenu = (whichMenu - 1) | 0x80;
@@ -264,38 +228,20 @@ void loop() {
 
 }
 
-void displayModeChangeTo(uint8_t whatMode, uint8_t doAnimate) {
+void displayModeChangeTo(uint8_t whatMode) {
 
 	displayMode = whatMode;
 
 	switch(whatMode) {
 	
 		case showTerminal:
-			
-			charSetOffset = 32;		
-			if (doAnimate) {
-				menuAnimate = 2;	
-				menuAnimateRowT = 0;
-				menuAnimateRowM = 8;				
-			}
-			else {
-				menuAnimateRowT = 8;
-				menuAnimateRowM = 0;				
-			}
-					
+			clearTerminal();		
+			charSetOffset = 32;			
 		break;
 		
 		case showMenu:		
-			charSetOffset = 0;	
-			if (doAnimate) {
-				menuAnimate = 1;	
-				menuAnimateRowT = 8;
-				menuAnimateRowM = 0;					
-			}
-			else {
-				menuAnimateRowT = 0;
-				menuAnimateRowM = 8;					
-			}			
+			whichMenu |= 0x80;			//OR in the bit to flag to redraw the menu screen
+			charSetOffset = 0;		
 		break;	
 		
 	}
@@ -371,7 +317,7 @@ void BASICmenu() {
 		}
 		
 		BASICtype = 1;							//Flag to start typing in bytes
-		displayModeChangeTo(showTerminal, 0);	//Switch to BASIC immediately no animation
+		displayModeChangeTo(showTerminal);	//Switch to BASIC immediately no animation
 		
 	}		
 
@@ -714,7 +660,7 @@ uint8_t buttonMenu() {
 
 void menuClear() {
 
-	memset(&menuMap[2][0], 0, 96);		//Clear everything under header (0 makes a space as does 32)
+	memset(&menuMap[2][0], 0, 192);		//Clear everything under header (0 makes a space as does 32)
 
 }
 
@@ -752,9 +698,10 @@ void streamLoad() {
 		}
 
 		addressAssertHalf(0x20, memPointer++ & 0xFF);			//Set low byte #		
-		byteOut(toWrite);	//Assert data			
+		byteOut(toWrite);										//Assert data			
 		digitalWrite(z80WR, 0);		//Strobe the write	
-		digitalWrite(z80WR, 1);	
+		digitalWrite(z80WR, 1);
+		delayMicroseconds(1);
 		dataHiZ();		
 		digitalWrite(z80RD, 0);		//Do read
 		uint8_t toCheck = byteIn();		
@@ -768,20 +715,16 @@ void streamLoad() {
 
 	whichFile.close();
 
-	if (0) { //errors) {
+	if (errors) {
 		menuText("ERRORS!", &menuMap[5][4]);
 		displayMenu(8);
 		whichMenu |= 0x80;
 		delay(1000);
 	}
 	else {
-		 TCCR4A = B10000010;				//Fast clock ON;
-		
+		displayModeChangeTo(showTerminal);	
+		TCCR4A = B10000010;					//Fast clock ON;		
 		startZ80();	
-		
-		whichMenu |= 0x80;						//Flag to redraw menu next time it pops up
-		
-		displayModeChangeTo(showTerminal, 0);			
 	}
 
 }
@@ -933,7 +876,9 @@ void access() {
 
 		TCCR4A = B10000010;			//Turn fast clock back on
 
-		charPrint(RX);			//Chars to OLED and also control command interpreter
+		if (displayMode == showTerminal) {
+			charPrint(RX);			//Chars to OLED and also control command interpreter	
+		}
 		Serial.write(RX); 		//Send data along as USB serial
 
 	}
@@ -943,7 +888,7 @@ void access() {
 void charPrint(uint8_t theChar) {
 
 	if (cursorStatus) {
-		tileMap[cursorX][cursorY] = 0;	//Erase cursor current position
+		menuMap[cursorY][cursorX] = 0;	//Erase cursor current position
 		blink = 14;			//Set this so cursor appears on next line immediately
 	}
 
@@ -975,7 +920,7 @@ void charPrint(uint8_t theChar) {
 
 	//If not opcode or payload then it's just normal text data. Print in on the OLED
 
-	tileMap[cursorX][cursorY] = theChar - charSetOffset;
+	menuMap[cursorY][cursorX] = theChar - charSetOffset;
 	
 	if (++cursorX == columns) {
 		cursorX = 0;
@@ -991,9 +936,9 @@ void advanceLine() {					//Advance the Y cursor and see if we need to scroll
 	}
 	
 	if (cursorY == winY) {
-		for (int x = 0 ; x < 32 ; x++) {
-			tileMap[x][winY] = 0;
-		}
+		
+		memset(&menuMap[winY][0], 0, 32);		//Erase line
+
 		if (++winY == rows) {								//Did we reach the end of the buffer?
 			winY = 0;										//Reset back to beginning
 		}
@@ -1017,10 +962,7 @@ void execOpCode(uint8_t whichOpCode) {		//When all payload bytes have been colle
 
 		break;
 		case 12:			//Clear screen
-			memset(&tileMap, 0, 256);
-			cursorX = 0;
-			cursorY = 0;
-			winY = 0;
+			clearTerminal();
 		break;
 		case 13:			//Carriage return (use this to start new line, better terminal compatibility)
 			cursorX = 0;
@@ -1047,6 +989,15 @@ void waitKey() {
     Serial.read();
   }
   
+}
+
+void clearTerminal() {
+
+	memset(&menuMap[0][0], 0, 256);
+	cursorX = 0;
+	cursorY = 0;
+	winY = 0;	
+
 }
 
 void byteOut(uint8_t theData) {
@@ -1172,25 +1123,25 @@ void display4x8(uint8_t showRows) {
 		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
 		Wire.write(0x40);
 
-		thisTile = tileMap[courseX++][courseY];		//Get the tile value
+		thisTile = menuMap[courseY][courseX++];		//Get the tile value
 
 		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
 			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
 		}	
  
-		thisTile = tileMap[courseX++][courseY];		//Get the tile value
+		thisTile = menuMap[courseY][courseX++];		//Get the tile value
 
 		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
 			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
 		}	
 
-		thisTile = tileMap[courseX++][courseY];		//Get the tile value
+		thisTile = menuMap[courseY][courseX++];		//Get the tile value
 
 		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
 			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
 		}	
 
-		thisTile = tileMap[courseX++][courseY];		//Get the tile value
+		thisTile = menuMap[courseY][courseX++];		//Get the tile value
 
 		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
 			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
