@@ -73,6 +73,8 @@ uint8_t filesInFolder = 0;			//The total # of files in directory. We display fil
 
 uint8_t BASICtype = 0;				//Flag if we're having the MCU type in BASIC commands such as RUN (to start a game without keyboard for instance)
 
+uint8_t textSize = 0;				//0 = small 1 = large
+
 void setup() {
 
 	Serial.begin(115200);					//Start USB serial
@@ -114,9 +116,43 @@ void setup() {
 
 	//PUT IN NO SD WARNING
 
-	SD.begin(4);
-
 	attachInterrupt(digitalPinToInterrupt(atmelSelect), access, FALLING); 		//Setup interrupt vector for when Z80 sends bytes to MCU
+
+	OLEDclear();
+	OLEDsetXY(0, 0);						//64 pixels to right, 1 row down	
+
+	if (!SD.begin(4)) {
+		OLEDtext(F("INSERT SD CARD AND REBOOT"));
+		while(1) {}
+	}
+	else {
+		OLEDtext(F("SD BOOT OK"));
+		delay(500);
+	}
+	
+	OLEDsetXY(0, 2);						//64 pixels to right, 1 row down
+	OLEDtext(F("HELLO WORLD!"));
+	
+	OLEDsetXY(0, 7);						//64 pixels to right, 1 row down
+	OLEDtext(F("HELLO WORLD!"));
+
+	uint8_t offset = 0;
+
+	while(1) {
+
+		OLEDrow0(offset);
+	
+		offset += 8;
+		
+		if (offset == 64) {
+			offset = 0;
+		}
+		
+		delay(500);
+		
+		
+	}
+
 
 }
 
@@ -373,10 +409,8 @@ void settingsMenu() {
 					rowTest -= 8;
 				}
 				
-				Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
-				Wire.write(0xD3);
-				Wire.write(rowTest);
-				Wire.endTransmission();
+				ssd1306_command(SSD1306_SETDISPLAYOFFSET);              // 0xD3
+				ssd1306_command(rowTest);                                   // no offset
 				
 				break;
 			
@@ -404,10 +438,8 @@ void settingsMenu() {
 					rowTest += 8;
 				}
 				
-				Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
-				Wire.write(0xD3);
-				Wire.write(rowTest);
-				Wire.endTransmission();
+				ssd1306_command(SSD1306_SETDISPLAYOFFSET);              // 0xD3
+				ssd1306_command(rowTest);                                   // no offset
 				
 				break;
 				
@@ -1060,37 +1092,6 @@ void access() {
 
 void charPrint(uint8_t theChar) {
 
-	if (cursorStatus) {
-		menuMap[cursorY][cursorX] = 0;	//Erase cursor current position
-		blink = 14;			//Set this so cursor appears on next line immediately
-	}
-
-	/*
-
-	if (opCode) {									//Collecting bytes of payload for the opcode?
-		payLoad[payLoadPointer] = theChar;			//Copy the byte into buffer
-		if (++payLoadPointer == payLoadSize[opCode]) {		//Did we collect 'em all? Execute payload
-			execOpCode(opCode);								//Execute
-			opCode = 0;							//Clear opcode
-			return;								//Exit function	
-		}
-	}
-	
-	*/
-
-	if (theChar < 31) {				//Did we get an opcode byte and not currently loading payload bytes?
-		if (payLoadSize[theChar] == 0) {			//No payload bytes required?
-			execOpCode(theChar);					//Execute immediately
-			return;								//Exit function	
-		}
-		else {								//Payload bytes required?
-			opCode = theChar;				//Set opCode loading flag			
-			payLoadPointer = 0;				//Reset the buffer pointer
-			return;							//Exit function					
-		}
-	
-	}
-
 	//If not opcode or payload then it's just normal text data. Print in on the OLED
 
 	menuMap[cursorY][cursorX] = theChar - charSetOffset;
@@ -1198,10 +1199,10 @@ void drawHex(uint16_t theValue, uint8_t *menuMemPoint) {
 		uint8_t theDigit = theValue & 0x0F;
 
 		if (theDigit < 10) {
-			*menuMemPoint-- = theDigit + 48;
+			*menuMemPoint-- = theDigit + 16;
 		}
 		else {
-			*menuMemPoint-- = theDigit + 55;
+			*menuMemPoint-- = theDigit + 23;
 		}
 
 		theValue >>= 4;			//Shift one nibble
@@ -1221,7 +1222,7 @@ void menuText(const __FlashStringHelper *ifsh, uint8_t *menuMemPoint) {
 		break;
 	}
 	else {
-		*menuMemPoint++ = c;
+		*menuMemPoint++ = c-32;
 	}
   }
 
@@ -1457,6 +1458,101 @@ void OLEDbegin(uint8_t vccstate, uint8_t i2caddr) {
 
 
   
+}
+
+void OLEDsetXY(uint8_t x, uint8_t y) {
+	
+	Wire.beginTransmission(_i2caddr);
+	Wire.write(0x00);
+	Wire.write(0xB0 | y);
+	Wire.write(0x00 | x & 0x0F);				//Low nibble X pos
+	Wire.write(0x10 | x >> 4);					//High nibble X pos	
+	Wire.endTransmission();
+
+}
+
+void OLEDchar(uint8_t theChar) {
+
+	Wire.beginTransmission(_i2caddr);
+	Wire.write(0x40);
+
+	if (textSize) {
+		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 8 horizontal lines to the OLED
+			Wire.write(pgm_read_byte_near(font8x8 + (theChar << 3) + col));             
+		}		
+	}
+	else {
+		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 8 horizontal lines to the OLED
+			Wire.write(pgm_read_byte_near(font4x8 + (theChar << 2) + col));             
+		}		
+	}
+
+	Wire.endTransmission();
+
+}
+
+void OLEDtext(const __FlashStringHelper *ifsh) {
+
+  PGM_P p = reinterpret_cast<PGM_P>(ifsh);			//Get pointer to FLASH test
+	
+  while (1) {
+    unsigned char c = pgm_read_byte(p++);			//Get byte from memory
+    if (c == 0) {
+		break;
+	}
+	else {
+		OLEDchar(c-32);								//Send char directly to OLED memory
+	}
+  }	
+	
+}
+
+void OLEDrow0(uint8_t whichRow) {
+
+	Wire.beginTransmission(_i2caddr);
+	Wire.write(0x00);
+	Wire.write(SSD1306_SETDISPLAYOFFSET);
+	Wire.write(whichRow);
+	Wire.endTransmission();	
+	
+}
+
+void OLEDclearRow(uint8_t whichRow) {
+
+	OLEDsetXY(0, whichRow);
+
+	for (int x = 0 ; x < 4 ; x++) {
+		
+		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
+		Wire.write(0x40);	
+		
+		for (uint8_t col = 0 ; col < 32 ; col++) {           //Send the 8 horizontal lines to the OLED
+			Wire.write(0);             
+		}
+		
+		Wire.endTransmission();
+	
+	}
+
+}
+
+void OLEDclear() {
+
+	OLEDsetXY(0, 0);	
+	
+	for (int x = 0 ; x < 34 ; x++) {
+			
+		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
+		Wire.write(0x40);
+
+		for (uint8_t col = 0 ; col < 32 ; col++) {           //Send the 8 horizontal lines to the OLED
+			Wire.write(0);             
+		}
+		
+		Wire.endTransmission();
+
+	}
+
 }
 
 void ssd1306_command(uint8_t c) {
