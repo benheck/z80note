@@ -17,14 +17,20 @@ uint8_t cursorX = 0;
 
 uint8_t rowTest = 8;
 
-//uint8_t tileMap[32][8];					//Set character screen memory. Always 8 characters high, but up to 32 wide if in "hi res" mode
-uint8_t menuMap[8][32];					//The memory map for menus. Separate from terminal tile map so they don't overwrite each other
-uint8_t fileName[13];
+#define bufferSize		64				//Size of terminal buffer
 
+uint8_t scBuffer[bufferSize];					//Buffer for terminal mode to print chars to OLED
+uint8_t scBuffPointWrite = 0;			//Point the Z80 writes to
+uint8_t scBuffPointRead = 0;			//Point the MCU reads from to draw to screen
+uint8_t fileName[13];
+uint32_t fileSize[6];
+
+uint16_t progressBarTicks;					//How many bytes must be read for the progress bar to advance 1 pixel to the right
+	
 uint8_t cursorStatus = 1;					//If cursor is on or not
 uint8_t columns = 32;						//How wide our display is set at
 uint8_t rows = 8;							//Total rows in memory. Window size is 32/16x8
-uint8_t blink;
+uint16_t blink;								//For to blink da cursor
 
 #define atmelSelect 	1						//The digital pin the Z80 selects the Atmel IO with
 #define	z80Reset		7
@@ -54,7 +60,7 @@ uint8_t dPadBounce = 0;						//The debounce clear bit for each button
 uint8_t rebootFlag = 0;						//Set this so system always starts in reboot mode
 
 uint8_t displayMode = 1;						//0 = terminal
-uint8_t whichMenu = 0x81;						//Which menu we are in if in menu mode (such as SD load, RAM dump, setting etc)
+uint8_t whichMenu = 0x80;						//Which menu we are in if in menu mode (such as SD load, RAM dump, setting etc)
 
 uint8_t controls;
 
@@ -114,12 +120,10 @@ void setup() {
 
 	pinMode(atmelSelect , INPUT);			//Atmel chip select
 
-	//PUT IN NO SD WARNING
-
 	attachInterrupt(digitalPinToInterrupt(atmelSelect), access, FALLING); 		//Setup interrupt vector for when Z80 sends bytes to MCU
 
 	OLEDclear();
-	OLEDsetXY(0, 0);						//64 pixels to right, 1 row down	
+	OLEDsetXY(0, 0);	
 
 	if (!SD.begin(4)) {
 		OLEDtext(F("INSERT SD CARD AND REBOOT"));
@@ -129,30 +133,6 @@ void setup() {
 		OLEDtext(F("SD BOOT OK"));
 		delay(500);
 	}
-	
-	OLEDsetXY(0, 2);						//64 pixels to right, 1 row down
-	OLEDtext(F("HELLO WORLD!"));
-	
-	OLEDsetXY(0, 7);						//64 pixels to right, 1 row down
-	OLEDtext(F("HELLO WORLD!"));
-
-	uint8_t offset = 0;
-
-	while(1) {
-
-		OLEDrow0(offset);
-	
-		offset += 8;
-		
-		if (offset == 64) {
-			offset = 0;
-		}
-		
-		delay(500);
-		
-		
-	}
-
 
 }
 
@@ -186,6 +166,8 @@ void loop() {
 
 	if (displayMode == showMenu) {
 
+		delay(1);
+
 		switch(whichMenu & 0x7F) {				//The top bit is set when changing menus and tells the system to redraw new menu			
 			case 0:
 				BASICmenu();
@@ -202,6 +184,22 @@ void loop() {
 		}
 
 		if (menuLeftRight) {
+			
+			if (animation++ == 128) {
+				OLEDsetXY(0, 0);
+				OLEDchar(28);
+				OLEDsetXY(12 << 3, 0);
+				OLEDchar(30);				
+			}
+			
+			if (animation == 255) {
+				animation = 0;
+				OLEDsetXY(0, 0);
+				OLEDchar(59);
+				OLEDsetXY(12 << 3, 0);
+				OLEDchar(61);	
+			}		
+			
 			if (dLeft()) {
 				
 				if (whichMenu == 0) {
@@ -224,26 +222,34 @@ void loop() {
 
 			}				
 		}
-
-		displayMenu(8);
-		
+	
 	}
 	else {
-		if (cursorStatus) {
-			if (++blink == 18) {
-				menuMap[cursorY][cursorX] = 95;
+		
+		if (scBuffer[scBuffPointRead]) {				//Something in buffer?
+		
+			charPrint(scBuffer[scBuffPointRead]);		//Send it
+			scBuffer[scBuffPointRead++] = 0;			//Clear it and advance
+			
+			if (scBuffPointRead == bufferSize) {		//Go around ring buffer
+				scBuffPointRead = 0;
 			}
-			if (blink == 36) {
-				blink = 0;
-				menuMap[cursorY][cursorX] = 0;
-			}	
+		}
+		else {											//Not printing characters? Blink cursor (if enabled)
+			if (cursorStatus) {
+				if (++blink == 4500) {
+					OLEDchar(95);
+					OLEDsetXY(cursorX << 2, cursorY);
+				}
+				if (blink == 9000) {
+					OLEDchar(0);
+					blink = 0;
+					OLEDsetXY(cursorX << 2, cursorY);
+				}			
+			}		
 		}
 		
-		display4x8(8);	
 	}
-
-	
-
 
 	if (Serial1.available() and !serialFlag) {		//Hardware UART (such as a serial keyboard)
 
@@ -284,7 +290,7 @@ void displayModeChangeTo(uint8_t whatMode) {
 	switch(whatMode) {
 	
 		case showTerminal:
-			clearTerminal();		
+			clearTerminal();	
 			charSetOffset = 32;			
 		break;
 		
@@ -298,46 +304,46 @@ void displayModeChangeTo(uint8_t whatMode) {
 }
 
 void setupMenu() {				//Basic background for all menus
-	
-	menuMap[0][0] = 1;			//Draw left edge
-	menuMap[1][0] = 5;
 
-	menuMap[0][1] = 171;		//Draw default arrows
-	menuMap[1][1] = 187;	
-	menuMap[0][12] = 173;
-	menuMap[1][12] = 189;	
+	OLEDclear();
+	OLEDrow0(0);
+	textSize = 1;
 
-	for (int x = 2 ; x < 5 ; x++) {		//Draw Z80 note logo
+	OLEDsetXY(0, 2);
+	OLEDchar('>' - 32);
 	
-		menuMap[0][11 + x] = x;
-		menuMap[1][11 + x] = x + 4;
+	OLEDsetXY(0, 1);
+	OLEDfillLine(13, 0x80);			//Draw a line across row 1 (up to logo)
+	OLEDtext(F("'()"));				//Bottom of logo	
 	
-	}
-	
-	menuClear();
-	
-	charSetOffset = 0;
-	
+	OLEDsetXY(13 << 3,0);			//Top of logo
+	OLEDtext(F("$%&"));
+
+	OLEDsetXY(1 << 3, 0);			//Draw menu title here	
 }
 
 void BASICmenu() {
 
 	if (whichMenu & 0x80) {			//MSB set? Redraw menu
 		setupMenu();					//Basic menu text
-		//---------xxxxxxxxxx----
-		menuTitle(F("BASIC@HELP"));
+		//---------<xxxxxxxxxxx>----
+		OLEDtext(F("BASIC  HELP"));
 		
 		menuY = 2;
-		menuMap[menuY][0] = '>';	
-		
+
 		whichMenu &= 0x7F;				//AND off the MSB
 
-		menuText(F("W + RUN CR"), &menuMap[2][1]);
-		menuText(F("RUN CR"), &menuMap[3][1]);	
-		menuText(F("BREAK"), &menuMap[4][1]);	
-		menuText(F("LIST"), &menuMap[5][1]);	
-		menuText(F("CR"), &menuMap[6][1]);	
-	
+		OLEDsetXY(8, 2);
+		OLEDtext(F("W + RUN"));
+		OLEDsetXY(8, 3);
+		OLEDtext(F("RUN"));
+		OLEDsetXY(8, 4);
+		OLEDtext(F("BREAK"));
+		OLEDsetXY(8, 5);
+		OLEDtext(F("LIST"));
+		OLEDsetXY(8, 6);
+		OLEDtext(F("CR"));		
+			
 	}
 
 	standardMenuCursor();
@@ -374,21 +380,25 @@ void settingsMenu() {
 
 	if (whichMenu & 0x80) {			//MSB set? Redraw menu
 		setupMenu();					//Basic menu text
-		//---------xxxxxxxxxx----
-		menuTitle(F("@SETTINGS@"));
+
+		//---------<xxxxxxxxxxx>----
+		OLEDtext(F(" SETTINGS"));
 		
 		menuY = 2;
-		menuMap[menuY][0] = '>';	
-		
+
 		whichMenu &= 0x7F;				//AND off the MSB
+
+		OLEDsetXY(0, 2);
 		
-		menuText(F("LOAD DEFAULTS"), &menuMap[2][1]);	
-		menuText(F("LOAD START"), &menuMap[3][1]);
-		menuText(F("PNTR JUMP"), &menuMap[7][1]);
+		OLEDtext(F(" LOAD DEFAULTS"));
+		
+		//menuText(F("LOAD DEFAULTS"), &menuMap[2][1]);	
+		//menuText(F("LOAD START"), &menuMap[3][1]);
+		//menuText(F("PNTR JUMP"), &menuMap[7][1]);
 	}
 	
-	drawHex(memPointers[0], &menuMap[3][15]);
-	drawHex(pointerJump, &menuMap[7][15]);
+	//drawHex(memPointers[0], &menuMap[3][15]);
+	//drawHex(pointerJump, &menuMap[7][15]);
 
 	standardMenuCursor();	
 
@@ -466,25 +476,24 @@ void RAMDUMPMenu() {
 
 	if (whichMenu & 0x80) {			//MSB set? Redraw menu
 		setupMenu();					//Basic menu text
-		//---------xxxxxxxxxx----
-		menuTitle(F("RAM_DUMPER"));
+		//---------<xxxxxxxxxxx>----
+		OLEDtext(F("RAMP DUMPER"));
 		
 		menuY = 2;
-		menuMap[menuY][0] = '>';	
 
 		whichMenu &= 0x7F;				//AND off the MSB
 
 		for (int x = 2 ; x < 6 ; x++) {
-			menuText(F("RAMSLOT1.BIN"), &menuMap[x][1]);
-			menuMap[x][8] = x + 47;		
+			//menuText(F("RAMSLOT1.BIN"), &menuMap[x][1]);
+			//menuMap[x][8] = x + 47;		
 		}
 		
-		menuText(F("START:"), &menuMap[6][5]);
-		menuText(F("  END:"), &menuMap[7][5]);
+		//menuText(F("START:"), &menuMap[6][5]);
+		//menuText(F("  END:"), &menuMap[7][5]);
 	}
 	
-	drawHex(memPointers[0], &menuMap[6][15]);
-	drawHex(memPointers[1], &menuMap[7][15]);
+	//drawHex(memPointers[0], &menuMap[6][15]);
+	//drawHex(memPointers[1], &menuMap[7][15]);
 
 	standardMenuCursor();
 
@@ -506,7 +515,7 @@ void RAMDUMPMenu() {
 	
 	if (buttonA()) {
 		for (int x = 0 ; x < 12 ; x++) {
-			fileName[x] = menuMap[menuY][1 + x];
+			//fileName[x] = menuMap[menuY][1 + x];
 		}
 		RAMdump();					//Dump selected RAM range to indicated file		
 	}		
@@ -518,46 +527,66 @@ void SDLoadMenu() {
 	if (whichMenu & 0x80) {			//MSB set? Redraw menu
 
 		setupMenu();					//Basic menu text
-		//---------xxxxxxxxxx----
-		menuTitle(F("@SD@@LOAD@"));
+		//---------<xxxxxxxxxxx>----
+		OLEDtext(F(" SD LOADER"));
 		
 		firstFile = 1;					//To start, the first file list should be the first one found on the card (no scroll)
 		menuY = 2;						//Reset selection cursor			
-		drawFiles();	
+		drawFiles();		
 		whichMenu &= 0x7F;				//AND off the MSB
 	
 	}
 
 	if (dDown()) {
+	
 		if (menuY == 7 and menuYmax > menuY) {		//Did we reach the botton and are there more entries? Scroll down
 			firstFile++;
-			drawFiles();
+			drawFiles();	
 		}
 		else {
 			if (menuY < menuYmax) {
-				menuMap[menuY][0] = 0;
-				menuMap[++menuY][0] = '>';					
+				OLEDsetXY(0, menuY);				//Clear the text portion
+				OLEDchar(0);					//Draw cursor				
+				++menuY;	
+				OLEDsetXY(0, menuY);				//Clear the text portion
+				OLEDchar('>' - 32);					//Draw cursor				
 			}
 		}
+		
+		drawFileSize();
+		
 	}
 	
 	if (dUp()) {
+		
 		if (menuY == 2) {			//If at the top, check if we can scroll up		
 			if (firstFile > 1) {
 				firstFile--;
-				drawFiles();
+				drawFiles();	
 			}		
 		}
 		else {						//Else just move cursor up
-			menuMap[menuY][0] = 0;
-			menuMap[--menuY][0] = '>';		
+			OLEDsetXY(0, menuY);				//Clear the text portion
+			OLEDchar(0);					//Draw cursor				
+			--menuY;	
+			OLEDsetXY(0, menuY);				//Clear the text portion
+			OLEDchar('>' - 32);					//Draw cursor		
 		}
+		
+		drawFileSize();
+		
 	}	
 	
 	if (buttonA()) {
-		for (int x = 0 ; x < 12 ; x++) {
-			fileName[x] = menuMap[menuY][1 + x];
-		}
+		drawFiles();		//Update the filename list so the selected filename will be stored to the filename buffer
+
+		OLEDsetXY(0, 1);
+		OLEDfillLine(13, 0x80);			//Draw a line across row 1 (up to logo)
+		
+		OLEDsetXY(0, 1);
+		
+		progressBarTicks = fileSize[menuY - 2] / 105;			//Figure out progress bar increment
+		
 		streamLoad();	//Load the selected file on screen
 	}	
 
@@ -566,48 +595,30 @@ void SDLoadMenu() {
 void standardMenuCursor() {
 
 	if (dDown() and menuY < 7) {
-		menuMap[menuY][0] = 0;
-		menuMap[++menuY][0] = '>';					
+		OLEDsetXY(0, menuY);
+		OLEDchar(0);			//Clear old cursor
+		OLEDsetXY(0, ++menuY);
+		OLEDchar(30);			//Clear old cursor		
+				
 	}
 	
 	if (dUp() and menuY > 2) {
-		menuMap[menuY][0] = 0;
-		menuMap[--menuY][0] = '>';					
+		OLEDsetXY(0, menuY);
+		OLEDchar(0);			//Clear old cursor
+		OLEDsetXY(0, --menuY);
+		OLEDchar(30);			//Clear old cursor					
 	}
 	
-}
-
-void menuTitle(const __FlashStringHelper *ifsh) {
-
-	PGM_P p = reinterpret_cast<PGM_P>(ifsh);			//Get pointer
-
-	uint8_t countPos = 2;
-
-	while (1) {
-		
-		unsigned char theLetter = pgm_read_byte(p++);			//Get byte from memory
-		
-		if (countPos == 12 or theLetter == 0) {
-			break;
-		}
-		
-		theLetter -= 64;
-
-		if (theLetter > 15) {
-			theLetter += 16;
-		}
-
-		menuMap[0][countPos] =  theLetter + 128;
-		menuMap[1][countPos++] = theLetter + 144;
-
-	}
-
 }
 
 void drawFiles() {
 
-	menuClear();							//Clear the text portion
-	menuMap[menuY][0] = '>';				//Draw cursor
+	for (int x = 2 ; x < 7 ; x++) {
+		OLEDclearRow(x);
+	}
+
+	OLEDsetXY(0, menuY);				//Clear the text portion
+	OLEDchar('>' - 32);					//Draw cursor
 		
 	uint8_t drawRow = 2;					//What row to draw filename on
 	uint8_t filesFound = 0;
@@ -626,21 +637,23 @@ void drawFiles() {
 			break;
 		}
 		
-		if (drawRow == 8) {
+		if (drawRow == 8) {									//Stop drawing filenames
 			break;
 		}
 		
 		filesFound++;
 		
-		if (filesFound >= firstFile) {
-			if (entry.isDirectory()) {
-				menuMap[drawRow][1] = 94;						//Draw folder icon
-				menuTextFile(entry.name(), &menuMap[drawRow++][2]);
-			}
-			else {
-				menuTextFile(entry.name(), &menuMap[drawRow++][1]);
-			}					
+		OLEDsetXY(8, drawRow);
 		
+		if (filesFound >= firstFile) {
+			if (!entry.isDirectory()) {
+				fileSize[drawRow - 2] = entry.size();
+				menuTextFile(entry.name());
+				if (drawRow == menuY) {					//Is cursor pointing to this entry? Copy filename to buffer in case it's selected
+					getFileName(entry.name());
+				}
+				drawRow++;
+			}							
 		}
 		
 		entry.close();
@@ -648,6 +661,20 @@ void drawFiles() {
 	}	
 
 	root.close();
+	
+	drawFileSize();
+	
+}
+
+void drawFileSize() {
+
+	cursorY = 1;
+	OLEDsetXY(0, 1);
+	textSize = 0;
+	OLEDtext(F("File size="));
+	OLEDsetXY(40, 1);
+	drawHex(fileSize[menuY - 2] - 1);		//Keep it to load range space not actual # of bytes (thus a 655356 byte file appears as FFFF)
+	textSize = 1;	
 
 }
 
@@ -838,12 +865,6 @@ uint8_t buttonMenu() {
 
 }
 
-void menuClear() {
-
-	memset(&menuMap[2][0], 0, 192);		//Clear everything under header (0 makes a space as does 32)
-
-}
-
 void streamLoad() {
 
 	rebootFlag = 0;
@@ -854,16 +875,18 @@ void streamLoad() {
 	
 	File whichFile = SD.open(fileName);
 
-	menuClear();
-	
-	menuText(F("LOADING"), &menuMap[5][4]);
-
-	displayMenu(8);
+	OLEDsetXY(2 << 3, 0);			//Draw menu title here	
+	//---------<xxxxxxxxxxx>----
+	OLEDtext(F("LOADING..."));
 
 	memoryControl(1);			//Take control of memory
 	dataOut();	//Assert bus
 	uint16_t errors = 0;
 	addressControl();
+
+	uint16_t progressBar = 0;
+	uint8_t progressBarX = 0;
+	
 	
 	uint16_t memPointer = memPointers[0];	//Starting address
 	
@@ -910,23 +933,27 @@ void streamLoad() {
 			}
 		
 		}
+
+		if (progressBar++ == progressBarTicks) {			//Update progress bar
+			OLEDsetXY(progressBarX++, 1);
+			Wire.beginTransmission(_i2caddr);
+			Wire.write(0x40);
+			Wire.write(0xFF);        //Draw a sloped progress bar so it looks cool
+			Wire.write(0x9F);
+			Wire.write(0x83);
+			Wire.endTransmission();
+			progressBar = 0;
+		
+		}
 	
 	}
 
 	whichFile.close();
 
-	if (errors) {
-		menuText(F("ERRORS!"), &menuMap[5][4]);
-		displayMenu(8);
-		whichMenu |= 0x80;
-		delay(1000);
-	}
-	else {
-		displayModeChangeTo(showTerminal);
-		whichMenu = 0;						//First menu that will open is BASIC help	
-		TCCR4A = B10000010;					//Fast clock ON;		
-		startZ80();	
-	}
+	displayModeChangeTo(showTerminal);
+	whichMenu |= 0x80;					//Flag to reload last used menu
+	TCCR4A = B10000010;					//Fast clock ON;		
+	startZ80();	
 
 }
 
@@ -942,9 +969,9 @@ void RAMdump() {
 
 	File whichFile = SD.open(fileName, FILE_WRITE);
 
-	menuClear();
-	menuText(F("DUMPING"), &menuMap[5][4]);
-	displayMenu(8);
+	//menuClear();
+	//menuText(F("DUMPING"), &menuMap[5][4]);
+	//displayMenu(8);
 	
 	//Serial.print(F("Dumping RAM to SD"));
 	
@@ -1082,7 +1109,13 @@ void access() {
 		TCCR4A = B10000010;			//Turn fast clock back on
 
 		if (displayMode == showTerminal) {
-			charPrint(RX);			//Chars to OLED and also control command interpreter	
+
+			scBuffer[scBuffPointWrite++] = RX; 			//Load byte into buffer
+			
+			if (scBuffPointWrite == bufferSize) {		//Go around ring buffer
+				scBuffPointWrite = 0;
+			}			
+			
 		}
 		Serial.write(RX); 		//Send data along as USB serial
 
@@ -1094,12 +1127,31 @@ void charPrint(uint8_t theChar) {
 
 	//If not opcode or payload then it's just normal text data. Print in on the OLED
 
-	menuMap[cursorY][cursorX] = theChar - charSetOffset;
+	if (cursorStatus) {
+		blink = 4400;			//Set this so cursor appears on next line immediately
+		OLEDchar(0);
+		OLEDsetXY(cursorX << 2, cursorY);		
+	}	
+
+	if (theChar < 31) {				//Did we get an opcode byte and not currently loading payload bytes?
+		if (payLoadSize[theChar] == 0) {			//No payload bytes required?
+			execOpCode(theChar);					//Execute immediately
+			return;								//Exit function	
+		}
+		else {								//Payload bytes required?
+			opCode = theChar;				//Set opCode loading flag			
+			payLoadPointer = 0;				//Reset the buffer pointer
+			return;							//Exit function					
+		}
 	
+	}
+
+	OLEDchar(theChar - 32);	
+
 	if (++cursorX == columns) {
 		cursorX = 0;
 		advanceLine();
-	}					
+	}
 
 }
 
@@ -1108,16 +1160,20 @@ void advanceLine() {					//Advance the Y cursor and see if we need to scroll
 	if (++cursorY > 7) {
 		cursorY = 0;
 	}
-	
+
 	if (cursorY == winY) {
-		
-		memset(&menuMap[winY][0], 0, 32);		//Erase line
+
+		OLEDclearRow(winY);						//Erase line
 
 		if (++winY == rows) {								//Did we reach the end of the buffer?
 			winY = 0;										//Reset back to beginning
 		}
+		
+		OLEDrow0(winY << 3);
 	}	
 
+	OLEDsetXY(cursorX << 2, cursorY);
+	
 }
 
 void execOpCode(uint8_t whichOpCode) {		//When all payload bytes have been collected vector here to execute the opcode
@@ -1131,6 +1187,7 @@ void execOpCode(uint8_t whichOpCode) {		//When all payload bytes have been colle
 		case 8:				//Backspace
 			if (cursorX > 0) {
 				cursorX--;
+				OLEDsetXY(cursorX << 2, cursorY);
 			}	
 		case 10:			//New line (basically ignore, but eat the byte)
 
@@ -1155,10 +1212,9 @@ void execOpCode(uint8_t whichOpCode) {		//When all payload bytes have been colle
 
 void clearTerminal() {
 
-	memset(&menuMap[0][0], 0, 256);
-	cursorX = 0;
-	cursorY = 0;
-	winY = 0;	
+	winY = 0;
+	OLEDclear();
+	textSize = 0;
 
 }
 
@@ -1192,20 +1248,20 @@ void dataOut() {			//Allows us to assert the data bus
 		
 }
 
-void drawHex(uint16_t theValue, uint8_t *menuMemPoint) {
+void drawHex(uint16_t theValue) {
 
 	for (int x = 0 ; x < 4 ; x++) {
 	
-		uint8_t theDigit = theValue & 0x0F;
+		uint8_t theDigit = (theValue >> 12) & 0x0F;
 
 		if (theDigit < 10) {
-			*menuMemPoint-- = theDigit + 16;
+			OLEDchar(theDigit + 16);	//0-9
 		}
 		else {
-			*menuMemPoint-- = theDigit + 23;
+			OLEDchar(theDigit + 23);	//A-F			
 		}
 
-		theValue >>= 4;			//Shift one nibble
+		theValue <<= 4;			//Shift one nibble
 	
 	}
 
@@ -1228,124 +1284,22 @@ void menuText(const __FlashStringHelper *ifsh, uint8_t *menuMemPoint) {
 
 }
 
-void menuTextFile(const char *str, uint8_t *menuMemPoint) {
+void menuTextFile(const char *str) {
 
   while (*str) {
-	*menuMemPoint++ = *str++;  
+	OLEDchar(*str++ - 32);  
   }
 
 }
 
-void displayMenu(uint8_t showRows) {
+void getFileName(const char *str) {
 
-	if (menuLeftRight) {
-		if (animation++ == 7) {
-			menuMap[0][1] = 171;
-			menuMap[1][1] = 187;	
-			menuMap[0][12] = 173;
-			menuMap[1][12] = 189;			
-		}
+	int x = 0;
+
+	while(*str) {
+		fileName[x++] = *str++;
 		
-		if (animation == 14) {
-			animation = 0;
-			menuMap[0][1] = 172;
-			menuMap[1][1] = 188;	
-			menuMap[0][12] = 174;
-			menuMap[1][12] = 190;	
-		}			
 	}
-	else {
-			menuMap[0][1] = 128;
-			menuMap[1][1] = 144;	
-			menuMap[0][12] = 128;
-			menuMap[1][12] = 144;			
-	}
-
-
-
-	uint16_t courseY = 0;                           		  //Get the course Y value for top line of visible screen
-
-	uint8_t thisTile;
-
-  for (uint8_t row = 0 ; row < showRows ; row++) {               //Draw the requested number of rows
-
-	uint8_t courseX = 0;           						 //Find the current coarseX position for this line
-
-    for (uint8_t colB = 0 ; colB < 8 ; colB++) { 		//Draw 8 groups of 2 characters across each line (16 char wide)
-
-		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
-		Wire.write(0x40);
-
-		thisTile = menuMap[courseY][courseX++];		//Get the tile value
-
-		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 8 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font8x8 + (thisTile << 3) + col));             
-		}	
-
-		thisTile = menuMap[courseY][courseX++];		//Get the tile value
-
-		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 8 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font8x8 + (thisTile << 3) + col));             
-		}	
-		
-		Wire.endTransmission();
-
-    }
-	
-    courseY++;                                            //Increment coarse pointer to next row
-    
-  }
-
-}
-
-void display4x8(uint8_t showRows) {
-
-	uint16_t courseY = winY;                           		  //Get the course Y value for top line of visible screen
-
-	uint8_t thisTile;
-
-  for (uint8_t row = 0 ; row < showRows ; row++) {               //Draw the requested number of rows
-
-	uint8_t courseX = 0;           						 //Find the current coarseX position for this line
-
-    for (uint8_t colB = 0 ; colB < 8 ; colB++) {		
-
-		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
-		Wire.write(0x40);
-
-		thisTile = menuMap[courseY][courseX++];		//Get the tile value
-
-		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
-		}	
- 
-		thisTile = menuMap[courseY][courseX++];		//Get the tile value
-
-		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
-		}	
-
-		thisTile = menuMap[courseY][courseX++];		//Get the tile value
-
-		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
-		}	
-
-		thisTile = menuMap[courseY][courseX++];		//Get the tile value
-
-		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font4x8 + (thisTile << 2) + col));             
-		}	
-
-		Wire.endTransmission();
- 
-    }
-	
-	if (++courseY > 7) {
-		courseY = 0;
-	}
- 
-  }
 
 }
 
@@ -1476,15 +1430,24 @@ void OLEDchar(uint8_t theChar) {
 	Wire.beginTransmission(_i2caddr);
 	Wire.write(0x40);
 
-	if (textSize) {
+	if (textSize) {			//Large text?
 		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 8 horizontal lines to the OLED
 			Wire.write(pgm_read_byte_near(font8x8 + (theChar << 3) + col));             
 		}		
 	}
-	else {
-		for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 8 horizontal lines to the OLED
-			Wire.write(pgm_read_byte_near(font4x8 + (theChar << 2) + col));             
-		}		
+	else {					//Small text
+	
+		if (displayMode == showMenu && cursorY == 1) {		//Drawing small text on the menu line?
+			for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
+				Wire.write((pgm_read_byte_near(font4x8 + (theChar << 2) + col) >> 1) | 0x80);	//OR in the bottom line             
+			}			
+		}
+		else {
+			for (uint8_t col = 0 ; col < 4 ; col++) {           //Send the 4 horizontal lines to the OLED
+				Wire.write(pgm_read_byte_near(font4x8 + (theChar << 2) + col));             
+			}				
+		}
+
 	}
 
 	Wire.endTransmission();
@@ -1507,6 +1470,24 @@ void OLEDtext(const __FlashStringHelper *ifsh) {
 	
 }
 
+void OLEDfillLine(uint8_t numChars, uint8_t fillByte) {
+
+	for (int x = 0 ; x < numChars ; x++) {
+
+		Wire.beginTransmission(_i2caddr);
+		Wire.write(0x40);
+		
+		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 4 horizontal lines to the OLED
+			Wire.write(fillByte);             
+		}	
+
+		Wire.endTransmission();
+		
+	}
+	
+	
+}
+
 void OLEDrow0(uint8_t whichRow) {
 
 	Wire.beginTransmission(_i2caddr);
@@ -1521,12 +1502,12 @@ void OLEDclearRow(uint8_t whichRow) {
 
 	OLEDsetXY(0, whichRow);
 
-	for (int x = 0 ; x < 4 ; x++) {
+	for (int x = 0 ; x < 16 ; x++) {							//Go slightly past to make sure we nuke all data
 		
 		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
 		Wire.write(0x40);	
 		
-		for (uint8_t col = 0 ; col < 32 ; col++) {           //Send the 8 horizontal lines to the OLED
+		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 8 horizontal lines to the OLED
 			Wire.write(0);             
 		}
 		
@@ -1538,21 +1519,14 @@ void OLEDclearRow(uint8_t whichRow) {
 
 void OLEDclear() {
 
-	OLEDsetXY(0, 0);	
-	
-	for (int x = 0 ; x < 34 ; x++) {
-			
-		Wire.beginTransmission(_i2caddr);					//Send chars in groups of 2 (16 bytes per transmission)
-		Wire.write(0x40);
-
-		for (uint8_t col = 0 ; col < 32 ; col++) {           //Send the 8 horizontal lines to the OLED
-			Wire.write(0);             
-		}
-		
-		Wire.endTransmission();
-
+	for (int x = 0 ; x < 8 ; x++) {			
+		OLEDclearRow(x);
 	}
-
+	
+	OLEDrow0(0);
+	OLEDsetXY(0, 0);	
+	cursorX = 0;
+	cursorY = 0;
 }
 
 void ssd1306_command(uint8_t c) {
