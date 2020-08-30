@@ -15,6 +15,13 @@ uint8_t winY = 0;
 uint8_t cursorY = 0;
 uint8_t cursorX = 0;
 
+uint8_t xPos = 0;
+uint8_t yPos = 0;
+
+uint8_t cpuState = 1;					//CPU state (1 = run 0 = single step)
+
+#define menuMax	5						//Max number of menu items
+
 uint8_t rowTest = 8;
 
 #define bufferSize		64				//Size of terminal buffer
@@ -50,6 +57,7 @@ uint16_t blink;								//For to blink da cursor
 #define joyMenu			0x40
 #define joyStart		0x80
 
+uint16_t viewPointer = 0;
 uint16_t memPointers[] = {0x0000, 0x7FFF};
 uint16_t pointerJump = 2048;				//How much the pointer moves when you change it
 uint8_t menuLeftRight = 1;					//By default this is enabled
@@ -180,7 +188,13 @@ void loop() {
 			break;			
 			case 3:
 				settingsMenu();			
-			break;			
+			break;
+			case 4:
+				RAMviewerMenu();			
+			break;	
+			case 5:
+				CPUcontrolMenu();
+			break;				
 		}
 
 		if (menuLeftRight) {
@@ -203,7 +217,7 @@ void loop() {
 			if (dLeft()) {
 				
 				if (whichMenu == 0) {
-					whichMenu = 3 | 0x80;
+					whichMenu = menuMax | 0x80;
 				}
 				else {
 					whichMenu = (whichMenu - 1) | 0x80;
@@ -213,7 +227,7 @@ void loop() {
 
 			if (dRight()) {
 
-				if (whichMenu == 3) {
+				if (whichMenu == menuMax) {
 					whichMenu = 0x80;
 				}
 				else {
@@ -343,7 +357,8 @@ void BASICmenu() {
 		OLEDtext(F("LIST"));
 		OLEDsetXY(8, 6);
 		OLEDtext(F("CR"));		
-			
+		OLEDsetXY(8, 7);
+		OLEDtext(F("CR"));			
 	}
 
 	standardMenuCursor();
@@ -477,7 +492,7 @@ void RAMDUMPMenu() {
 	if (whichMenu & 0x80) {			//MSB set? Redraw menu
 		setupMenu();					//Basic menu text
 		//---------<xxxxxxxxxxx>----
-		OLEDtext(F("RAMP DUMPER"));
+		OLEDtext(F("RAM DUMPER"));
 		
 		menuY = 2;
 
@@ -520,6 +535,169 @@ void RAMDUMPMenu() {
 		RAMdump();					//Dump selected RAM range to indicated file		
 	}		
 	
+}
+
+void RAMviewerMenu() {
+	
+	if (whichMenu & 0x80) {			//MSB set? Redraw menu
+		setupMenu();					//Basic menu text
+		//---------<xxxxxxxxxxx>----
+		OLEDtext(F("RAM VIEWER"));
+		
+		menuY = 2;
+
+		whichMenu &= 0x7F;				//AND off the MSB
+
+		viewPointer = 0;
+		
+		drawRAMcontents();
+	}	
+
+	if (dUp() and viewPointer > 47) {
+		viewPointer -= 48;
+		drawRAMcontents();
+		
+	}
+	if (dDown() and viewPointer < 65487) {
+		viewPointer += 48;
+		drawRAMcontents();
+		
+	}	
+	
+}
+
+void CPUcontrolMenu() {
+	
+	if (whichMenu & 0x80) {			//MSB set? Redraw menu
+		setupMenu();					//Basic menu text
+		//---------<xxxxxxxxxxx>----
+		OLEDtext(F("CPU CONTROL"));
+		
+		menuY = 2;
+
+		whichMenu &= 0x7F;				//AND off the MSB
+
+		OLEDsetXY(8, 2);
+		if (cpuState) {
+			OLEDtext(F("PAUSE CPU "));
+		}
+		else {
+			OLEDtext(F("RESUME CPU"));	
+		}
+		
+		OLEDsetXY(8, 3);
+		OLEDtext(F("SINGLE STEP"));
+		OLEDsetXY(8, 4);
+		OLEDtext(F("SPEED= 4MHZ"));
+		
+		OLEDsetXY(32, 7);
+		OLEDtext(F("D:"));
+		OLEDsetXY(80, 7);
+		OLEDtext(F("A:"));
+		
+	}	
+	
+	standardMenuCursor();
+	OLEDsetXY(48, 7);
+	drawHexByte(byteIn());
+	OLEDsetXY(96, 7);
+	getCurrentAddress();
+
+	
+	if (buttonA()) {			//Execute a CPU control command
+		switch(menuY) {
+			case 2:
+				OLEDsetXY(8, 2);
+				if (cpuState) {
+					cpuState = 0;
+					TCCR4A = 0;				//Fast clock OFF
+					PORTE &= 0xFB;
+					OLEDtext(F("RESUME CPU"));	
+					
+				}
+				else {
+					cpuState = 1;
+					PORTE &= 0xFB;
+					TCCR4A = B10000010;					//Fast clock ON;
+					OLEDtext(F("PAUSE CPU "));	
+				}
+			break;
+			case 3:
+				cpuState = 0;			//CPU off
+				TCCR4A = 0;				//Fast clock OFF
+				PORTE |= 0x04;					//Wait state
+				delay(10);
+				PORTE &= 0xFB;
+				OLEDsetXY(8, 2);
+				OLEDtext(F("RESUME CPU"));	
+			break;
+			case 4:
+			
+			break;
+			case 5:
+
+			break;	
+			case 6:
+			
+			break;			
+		}
+		
+	}
+	
+}
+
+void drawRAMcontents() {
+
+	requestBus();
+	
+	TCCR4A = 0;				//Fast clock OFF;
+	
+	textSize = 0;
+
+	memoryControl(1);			//Take control of memory
+	dataHiZ();	//Assert bus
+	addressControl();	
+	digitalWrite(z80RD, 0);		//Do read
+	
+	uint16_t viewP = viewPointer;
+	
+	for (int y = 2 ; y < 8 ; y++) {
+		
+		OLEDsetXY(0, y);
+		drawHex(viewP);
+		OLEDchar(':' - 32);
+		OLEDchar(0);
+		for (int x = 0 ; x < 8 ; x++) {
+		
+			if (!(viewP & 0x00FF)) {							//Start of page? Assert page #. This reduces I2C access time
+				addressAssertHalf(0x21, viewP >> 8);			//Set high byte page #				
+			}
+			
+			addressAssertHalf(0x20, viewP & 0xFF);			//Set low byte #		
+			delayMicroseconds(1);
+
+			drawHexByte(byteIn());
+			OLEDchar(0);	
+			
+			viewP++;
+
+		}
+
+				
+	}
+	
+	textSize = 1;
+	
+	digitalWrite(z80RD, 1);
+
+	TCCR4A = B10000010;				//Fast clock ON;
+	
+	memoryControl(0);		//Release memory controls
+	//dataHiZ();				//Make sure data bus is released
+	addressRelease();		//Release address bus
+	digitalWrite(z80BUSREQ, 1);	//Release bus request and you're ready to go	
+
+
 }
 
 void SDLoadMenu() {
@@ -886,8 +1064,7 @@ void streamLoad() {
 
 	uint16_t progressBar = 0;
 	uint8_t progressBarX = 0;
-	
-	
+		
 	uint16_t memPointer = memPointers[0];	//Starting address
 	
 	while(whichFile.available()) {
@@ -902,22 +1079,25 @@ void streamLoad() {
 
 		addressAssertHalf(0x20, memPointer++ & 0xFF);			//Set low byte #		
 
-		delayMicroseconds(5);
+		//delayMicroseconds(5);
 
 		uint8_t byteChecked = 1;
 		
 		while(byteChecked) {
 			
 			dataOut();	//Assert bus
-			
-			digitalWrite(z80WR, 0);		//Strobe the write			
-			byteOut(toWrite);										//Assert data		
+			byteOut(toWrite);										//Assert data
+			digitalWrite(z80WR, 0);		//Strobe the write		
+			delayMicroseconds(2);			
 			digitalWrite(z80WR, 1);
+			delayMicroseconds(2);
 			
 			dataHiZ();
+			
+			delayMicroseconds(2);
 
 			digitalWrite(z80RD, 0);		//Check if byte is correct
-			delayMicroseconds(1);
+			delayMicroseconds(3);
 			uint8_t toCheck = byteIn();		
 			digitalWrite(z80RD, 1);	
 			
@@ -1036,7 +1216,7 @@ void startZ80() {
 
 void requestBus() {
 	
-	Serial.println(F("Requesting Z80 bus"));
+	//Serial.println(F("Requesting Z80 bus"));
 	
 	digitalWrite(z80BUSREQ, 0);			//Request bus
 
@@ -1092,7 +1272,11 @@ void access() {
 		DDRF &= 0x0F;			//Lower nibble of data bus		
 
 		DDRF &= ~(1 << 1);		//Turn this pin back into an input so IRQ goes high to release it
-		TCCR4A = B10000010;		//Turn fast clock back on
+
+		if (cpuState) {
+			TCCR4A = B10000010;		//Turn fast clock back on
+		}
+
 		serialFlag = 0;			//Clear flag for serial bytes
 	
 	}
@@ -1106,8 +1290,10 @@ void access() {
 		PORTE |= 0x04;					//T3 state
 		PORTE &= 0xFB;
 
-		TCCR4A = B10000010;			//Turn fast clock back on
-
+		if (cpuState) {
+			TCCR4A = B10000010;		//Turn fast clock back on
+		}
+		
 		if (displayMode == showTerminal) {
 
 			scBuffer[scBuffPointWrite++] = RX; 			//Load byte into buffer
@@ -1268,6 +1454,26 @@ void drawHex(uint16_t theValue) {
 	
 }
 
+void drawHexByte(uint16_t theValue) {
+
+	for (int x = 0 ; x < 2 ; x++) {
+	
+		uint8_t theDigit = (theValue >> 4) & 0x0F;
+
+		if (theDigit < 10) {
+			OLEDchar(theDigit + 16);	//0-9
+		}
+		else {
+			OLEDchar(theDigit + 23);	//A-F			
+		}
+
+		theValue <<= 4;			//Shift one nibble
+	
+	}
+
+	
+}
+
 void menuText(const __FlashStringHelper *ifsh, uint8_t *menuMemPoint) {
 
   PGM_P p = reinterpret_cast<PGM_P>(ifsh);			//Get pointer
@@ -1322,6 +1528,26 @@ uint8_t getButtons() {
 
 	return ~(Wire.read()); 						// receive a byte as character and return the inverse of it
 
+}
+
+void getCurrentAddress() {
+	
+	Wire.beginTransmission(0x21);				//Address IO
+	Wire.write(0x00);							//Select read register
+	Wire.endTransmission();
+	
+	Wire.requestFrom(0x21, 1);    				//Get address high byte
+
+	drawHexByte(Wire.read());
+
+	Wire.beginTransmission(0x20);				//Address IO
+	Wire.write(0x00);							//Select read register
+	Wire.endTransmission();
+	
+	Wire.requestFrom(0x20, 1);    				//Get address low byte
+
+	drawHexByte(Wire.read());	
+	
 }
 
 void addressControl() {
@@ -1423,6 +1649,9 @@ void OLEDsetXY(uint8_t x, uint8_t y) {
 	Wire.write(0x10 | x >> 4);					//High nibble X pos	
 	Wire.endTransmission();
 
+	xPos = x;			//Update the values
+	yPos = y;
+	
 }
 
 void OLEDchar(uint8_t theChar) {
@@ -1433,7 +1662,8 @@ void OLEDchar(uint8_t theChar) {
 	if (textSize) {			//Large text?
 		for (uint8_t col = 0 ; col < 8 ; col++) {           //Send the 8 horizontal lines to the OLED
 			Wire.write(pgm_read_byte_near(font8x8 + (theChar << 3) + col));             
-		}		
+		}	
+		xPos += 8;
 	}
 	else {					//Small text
 	
@@ -1447,6 +1677,7 @@ void OLEDchar(uint8_t theChar) {
 				Wire.write(pgm_read_byte_near(font4x8 + (theChar << 2) + col));             
 			}				
 		}
+		xPos += 4;
 
 	}
 
