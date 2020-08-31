@@ -58,7 +58,7 @@ uint16_t blink;								//For to blink da cursor
 #define joyStart		0x80
 
 uint16_t viewPointer = 0;
-uint16_t memPointers[] = {0x0000, 0x7FFF};
+uint16_t memPointers[] = {0x0000, 0x1FFF};
 uint16_t pointerJump = 2048;				//How much the pointer moves when you change it
 uint8_t menuLeftRight = 1;					//By default this is enabled
 
@@ -110,7 +110,9 @@ void setup() {
 	pinMode(z80Reset, INPUT);		//Release reset
 
 	pinMode(z80WR, INPUT);			//Write
+	digitalWrite(z80WR, 1);			//With pullups
 	pinMode(z80RD, INPUT);			//Read
+	digitalWrite(z80RD, 1);			//With pullups
 
 	DDRE |= (1 << 2);				//Slow clock (HWB, not sure if it's attached to a Digital Pin)
 
@@ -505,6 +507,11 @@ void RAMDUMPMenu() {
 		
 		//menuText(F("START:"), &menuMap[6][5]);
 		//menuText(F("  END:"), &menuMap[7][5]);
+		
+		OLEDsetXY(8, 2);
+		OLEDtext(F("FILL RAM"));
+		OLEDsetXY(8, 3);
+		OLEDtext(F("RAM TO SD"));		
 	}
 	
 	//drawHex(memPointers[0], &menuMap[6][15]);
@@ -532,7 +539,14 @@ void RAMDUMPMenu() {
 		for (int x = 0 ; x < 12 ; x++) {
 			//fileName[x] = menuMap[menuY][1 + x];
 		}
-		RAMdump();					//Dump selected RAM range to indicated file		
+		if (menuY == 2) {
+			RAMload();
+		}
+		if (menuY == 3) {
+			dumpTest();
+		}
+		
+		//RAMdump();					//Dump selected RAM range to indicated file		
 	}		
 	
 }
@@ -548,7 +562,7 @@ void RAMviewerMenu() {
 
 		whichMenu &= 0x7F;				//AND off the MSB
 
-		viewPointer = 0;
+		viewPointer = 0x0000;
 		
 		drawRAMcontents();
 	}	
@@ -562,8 +576,8 @@ void RAMviewerMenu() {
 		viewPointer += 48;
 		drawRAMcontents();
 		
-	}	
-	
+	}
+
 }
 
 void CPUcontrolMenu() {
@@ -650,14 +664,15 @@ void drawRAMcontents() {
 
 	requestBus();
 	
+	delay(5);
+	
 	TCCR4A = 0;				//Fast clock OFF;
 	
 	textSize = 0;
-
-	memoryControl(1);			//Take control of memory
+	
 	dataHiZ();	//Assert bus
+	memoryControl(1);			//Take control of memory
 	addressControl();	
-	digitalWrite(z80RD, 0);		//Do read
 	
 	uint16_t viewP = viewPointer;
 	
@@ -674,9 +689,9 @@ void drawRAMcontents() {
 			}
 			
 			addressAssertHalf(0x20, viewP & 0xFF);			//Set low byte #		
-			delayMicroseconds(1);
-
+			digitalWrite(z80RD, 0);		//Do read
 			drawHexByte(byteIn());
+			digitalWrite(z80RD, 1);			
 			OLEDchar(0);	
 			
 			viewP++;
@@ -687,16 +702,12 @@ void drawRAMcontents() {
 	}
 	
 	textSize = 1;
-	
-	digitalWrite(z80RD, 1);
 
-	TCCR4A = B10000010;				//Fast clock ON;
-	
 	memoryControl(0);		//Release memory controls
-	//dataHiZ();				//Make sure data bus is released
 	addressRelease();		//Release address bus
+	
+	TCCR4A = B10000010;				//Fast clock ON;	
 	digitalWrite(z80BUSREQ, 1);	//Release bus request and you're ready to go	
-
 
 }
 
@@ -1049,6 +1060,8 @@ void streamLoad() {
 	
 	requestBus();
 	
+	delay(5);
+	
 	TCCR4A = 0;				//Fast clock OFF;
 	
 	File whichFile = SD.open(fileName);
@@ -1136,6 +1149,99 @@ void streamLoad() {
 	startZ80();	
 
 }
+
+void dumpTest() {
+
+	requestBus();
+	
+	TCCR4A = 0;				//Fast clock OFF;
+
+	if (SD.exists("TEST.BIN")) {			//If file exists erase it and start over
+		SD.remove("TEST.BIN");
+	}
+	
+	File whichFile = SD.open("TEST.BIN", FILE_WRITE);
+
+	//menuClear();
+	//menuText(F("DUMPING"), &menuMap[5][4]);
+	//displayMenu(8);
+	
+	//Serial.print(F("Dumping RAM to SD"));
+	
+	memoryControl(1);			//Take control of memory
+	dataHiZ();	//Assert bus
+	addressControl();
+	
+	uint16_t memPointer = memPointers[0];	//Starting address
+	digitalWrite(z80RD, 0);		//Do read
+
+	while(1) {
+
+		if (!(memPointer & 0x00FF)) {							//Start of page? Assert page #. This reduces I2C access time
+			addressAssertHalf(0x21, memPointer >> 8);			//Set high byte page #				
+			Serial.print("Dumping page ");
+			Serial.println(memPointer >> 8);
+		}
+		
+		addressAssertHalf(0x20, memPointer & 0xFF);			//Set low byte #		
+		delayMicroseconds(1);
+
+		uint8_t toCheck = byteIn();			
+
+		whichFile.write(toCheck);	//Write to file
+		
+		if (memPointer++ == memPointers[1]) {				//Did we do the last byte? Done!
+			break;
+		}
+	
+	}
+	
+	digitalWrite(z80RD, 1);
+
+	whichFile.close();
+	
+	//Serial.println(F("done"));
+	
+	TCCR4A = B10000010;				//Fast clock ON;
+	
+	memoryControl(0);		//Release memory controls
+	dataHiZ();				//Make sure data bus is released
+	addressRelease();		//Release address bus
+	digitalWrite(z80BUSREQ, 1);	//Release bus request and you're ready to go	
+
+	whichMenu |= 0x80;		//Trigger a menu redraw
+	
+}
+
+void RAMload() {
+
+	memoryControl(1);			//Take control of memory
+	dataOut();	//Assert bus
+	addressControl();
+
+	uint16_t progressBar = 0;
+	uint8_t progressBarX = 0;
+		
+	uint16_t memPointer = memPointers[0];	//Starting address
+	
+	
+	while(memPointer < 2096) {
+
+		if ((memPointer & 0x00FF) == 0) {							//Start of page? Assert page #. This reduces I2C access time
+			addressAssertHalf(0x21, memPointer >> 8);			//Set high byte page #
+		}
+
+		addressAssertHalf(0x20, memPointer & 0xFF);			//Set low byte #		
+
+		dataOut();	//Assert bus
+		byteOut(memPointer++ & 0xFF);										//Assert data
+		digitalWrite(z80WR, 0);		//Strobe the write		
+		digitalWrite(z80WR, 1);
+			
+	}
+
+}
+
 
 void RAMdump() {
 
@@ -1228,7 +1334,7 @@ void memoryControl(uint8_t state) {
 
 	if (state) {					//1 = Take control of memory
 
-		digitalWrite(z80WR, 1);		
+		digitalWrite(z80WR, 1);		//Ensure it's high
 		pinMode(z80WR, OUTPUT);
 
 		digitalWrite(z80RD, 1);			
@@ -1237,8 +1343,10 @@ void memoryControl(uint8_t state) {
 	}
 	else {							//0 = release memory
 
-		pinMode(z80WR, INPUT);
-		pinMode(z80RD, INPUT);
+		pinMode(z80WR, INPUT);			//Write
+		digitalWrite(z80WR, 1);			//With pullups
+		pinMode(z80RD, INPUT);			//Read
+		digitalWrite(z80RD, 1);			//With pullups
 	
 	}
 	
