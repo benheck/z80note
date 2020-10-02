@@ -1,0 +1,69 @@
+Partlist exported from C:/Users/ben/Documents/GitHub/z80note/PCB/SBC_rev 3.sch at 10/2/2020 12:00 PM
+
+Part       Value             Device                   Package               Description                                               MF MPN       OC_FARNELL OC_NEWARK SPICEPREFIX TP_SIGNAL_NAME
+/ATMEL     TPB1,27           TPB1,27                  B1,27                 Test pad                                                                                                              
+C1         22pf              RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+C2         22pf              RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+C3         .1uf              RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+C4         .1uf              RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+C5         .1uf              RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+C6         .1uf              RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+C7         100uf             CPOL-USE2.5-7            E2,5-7                POLARIZED CAPACITOR, American symbol                                                                                  
+C8         1uf               RESISTOR_C-US025-024X044 RESISTOR_C025-024X044 CAPACITOR, American symbol                                                                                            
+CN1                          USBMOLEX                 USB-MINIB-THM-MOLEX   USB Connectors                                                                                                        
+IC1        74ALS00D          74ALS00D                 SO14                  Quad 2-input NAND gate                                                                                                
+IC2        74LS138D          74LS138D                 SO16                  3-line to 8-line DECODER/DEMULTIPLEXER                                                                                
+IC4        PCA9534D          PCA9534D                 SO16W                 8-bit I2C-bus and SMBus low power I/O port with interrupt    PCA9534DB 1408284    18M7513                             
+IC5        PCA9534D          PCA9534D                 SO16W                 8-bit I2C-bus and SMBus low power I/O port with interrupt    PCA9534DB 1408284    18M7513                             
+IC6        PCA9534D          PCA9534D                 SO16W                 8-bit I2C-bus and SMBus low power I/O port with interrupt    PCA9534DB 1408284    18M7513                             
+IC7        74LS32D           74LS32D                  SO14                  Quad 2-input OR gate                                                                                                  
+IC8                          Z80CPU                   DIL40                 Z80 FAMILY DEVICE                                                                                                     
+INT        TPB1,27           TPB1,27                  B1,27                 Test pad                                                                                                              
+JP1        KEY               PINHD-1X2                1X02                  PIN HEADER                                                                                                            
+JP2        FASTCLK           PINHD-1X2/90             1X02/90               PIN HEADER                                                                                                            
+JP3                          PINHD-1X2/90             1X02/90               PIN HEADER                                                                                                            
+LED1                         LED3MM                   LED3MM                LED                                                                                                                   
+LED2                         LED3MM                   LED3MM                LED                                                                                                                   
+ON                           LED3MM                   LED3MM                LED                                                                                                                   
+Q1                           CRYSTALHC49S             HC49/S                CRYSTAL                                                                1667008    unknown                             
+R1         1k                R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R2         1k                R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R3         10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R4         10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R5         10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R6         1M                R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R7         22                R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R8         22                R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R9         10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R10        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R11        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R12        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R13        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R14        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R15        1k                R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R16        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R17        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+R18        10k               R-US_R1206               R1206                 RESISTOR, American symbol                                                                   R                         
+RD         TPB1,27           TPB1,27                  B1,27                 Test pad                                                                                                              
+RN1                          RN08                     RN-9                  RESISTOR NETWORK                                                       unknown    unknown                             
+RST        PROG              PINHD-1X1                1X01                  Pin header 1x1 for 0.1" spacing                                                                                       
+SD_ADAPTER SD_ADAPTER        SD_ADAPTER               SD_RIGHTANGLE                                                                                                                               
+U$1        CARDSLOT50        CARDSLOT50               CARD50                                                                                                                                      
+U$2        ATMEGA32U4-AU     ATMEGA32U4-AU            TQFP44                http://www.ladyada.net/library/eagle                                                                                  
+U$3        IS65C256AL_32KRAM IS65C256AL_32KRAM        SO28-3                                                                                                                                      
+U$4        IS65C256AL_32KRAM IS65C256AL_32KRAM        SO28-3                                                                                                                                      
+U$5        TACT              TACT                     6MM_TACT                                                                                                                                    
+U$6        TACT              TACT                     6MM_TACT                                                                                                                                    
+U$7        TACT              TACT                     6MM_TACT                                                                                                                                    
+U$8        TACT              TACT                     6MM_TACT                                                                                                                                    
+U$9        GND_STRIP         GND_STRIP                GND_PADS                                                                                                                                    
+U$10       GND_STRIP         GND_STRIP                GND_PADS                                                                                                                                    
+U$11       GND_STRIP         GND_STRIP                GND_PADS                                                                                                                                    
+U$12       GND_STRIP         GND_STRIP                GND_PADS                                                                                                                                    
+U$13       OLED_SSD1306_I2C  OLED_SSD1306_I2C         OLED_128X64_I2C                                                                                                                             
+U$14       SKQUCAA010        SKQUCAA010               SKQUCAA010                                                                                                                                  
+U$16       SN74LS245         SN74LS245                SO20L                                                                                                                                       
+U$17       TACT              TACT                     6MM_TACT                                                                                                                                    
+U$18       SWITCH_1825232-1  SWITCH_1825232-1         SWITCH                                                                                                                                      
+U$19       TACT              TACT                     6MM_TACT                                                                                                                                    
+WR         TPB1,27           TPB1,27                  B1,27                 Test pad                                                                                                              
