@@ -2,7 +2,7 @@
 #include <SPI.h>
 #include <Wire.h>
 #include <SD.h>
-#include <EEPROM.h>
+//#include <EEPROM.h>
 
 int8_t _vccstate;
 int8_t _i2caddr;
@@ -1428,6 +1428,11 @@ void charPrint(uint8_t theChar) {
 	}	
 
 	if (theChar < 31) {				//Did we get an opcode byte and not currently loading payload bytes?
+
+		execOpCode(theChar);					//Execute immediately
+		return;								//Exit function	
+	
+		/*
 		if (payLoadSize[theChar] == 0) {			//No payload bytes required?
 			execOpCode(theChar);					//Execute immediately
 			return;								//Exit function	
@@ -1437,6 +1442,8 @@ void charPrint(uint8_t theChar) {
 			payLoadPointer = 0;				//Reset the buffer pointer
 			return;							//Exit function					
 		}
+		
+		*/
 	
 	}
 

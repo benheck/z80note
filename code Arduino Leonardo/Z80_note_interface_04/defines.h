@@ -53,6 +53,9 @@
 #define SSD1306_VERTICAL_AND_RIGHT_HORIZONTAL_SCROLL 0x29
 #define SSD1306_VERTICAL_AND_LEFT_HORIZONTAL_SCROLL 0x2A
 
+
+/*
+
 uint8_t opCode = 0;					//When a command code comes in we copy it to this. Then we collect X payload bytes and execute command
 uint8_t payLoadPointer = 0;			//What buffer position we are writing payload bytes to
 uint8_t payLoad[4];					//Buffer to store command payload bytes as they stream in
@@ -61,6 +64,8 @@ uint8_t payLoadSize[] =    {0, 1, 0, 0, 0, 0, 0, 0,
 							0, 0, 0, 0, 0, 0, 0, 0,
 							0, 0, 0, 0, 0, 0, 0, 0,
 							0, 0, 0, 0, 0, 0, 0, 1};
+							
+*/
 							
 const uint8_t font8x8[] PROGMEM = {    //The 8x8 text font with extended graphics and a set of tall letters
 
