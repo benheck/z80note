@@ -45,6 +45,7 @@ uint8_t cursorY = 0;
 uint8_t cursorX = 0;
 
 uint8_t cpuState = 1;					//CPU state (1 = run 0 = single step)
+uint8_t sqWave = 0;						//For drawing the square wave for single stepping
 
 uint16_t progressBar;
 uint8_t progressBarX;
@@ -381,7 +382,8 @@ void settingsMenu() {
 		OLEDtextXY(8, 2, F("LOAD DEFAULTS"));
 		OLEDtextXY(8, 3, F("LOAD START"));
 		OLEDtextXY(8, 4, F("PTR JUMP"));		
-
+		OLEDtextXY(8, 5, F("CLEAR RAM"));
+		
 	}
 	
 	OLEDsetXY(95, 3);
@@ -438,6 +440,18 @@ void settingsMenu() {
 	else {
 		menuLeftRight = 1;
 	}
+	
+	if (dpadCheck(joyA)) {			//Execute a CPU control command
+		switch(menuY) {
+			case 5:
+				RAMclear();
+			break;	
+			case 6:
+			
+			break;			
+		}
+		
+	}	
 
 }
 
@@ -543,30 +557,23 @@ void CPUcontrolMenu() {
 
 		//OLEDsetXY(8, 2);
 		if (cpuState) {
-			OLEDtextXY(8, 2, F("PAUSE CPU "));
+			OLEDtextXY(8, 2, F("PAUSE"));
 		}
 		else {
-			OLEDtextXY(8, 2, F("RESUME CPU"));	
+			OLEDtextXY(8, 2, F("RESUME"));	
 		}
 		
 		//OLEDsetXY(8, 3);
 		OLEDtextXY(8, 3, F("STEP"));
 		//OLEDsetXY(8, 4);
 		OLEDtextXY(8, 6, F("SPEED 4MHZ"));
-		
-		//OLEDsetXY(32, 7);
-		OLEDtextXY(40, 7, F("D="));
-		//OLEDsetXY(80, 7);
-		OLEDtextXY(80, 7, F("A="));
-		
+
+		sqWave = 0;
+	
 	}	
 	
 	standardMenuCursor();
-	OLEDsetXY(56, 7);
-	drawHexByte(byteIn());						//Draw data bus
-	OLEDchar(0);								//Draw a space							
-	drawHexByte(readBusExpander(0x21));			//Get and draw address high byte
-	drawHexByte(readBusExpander(0x20));			//Get and draw address high byte
+	drawBus();
 	
 	if (dpadCheck(joyA)) {			//Execute a CPU control command
 		switch(menuY) {
@@ -583,20 +590,26 @@ void CPUcontrolMenu() {
 					cpuState = 1;
 					PORTE &= 0xFB;
 					fastClockControl(clockOn);					//Fast clock ON;
-					OLEDtextXY(8, 2, F("PAUSE"));	
+					OLEDtextXY(8, 2, F("PAUSE "));	
+					OLEDsetXY(0, 1);
+					OLEDfillLine(13, 0x80);			//Draw a line across row 1 (up to logo)
+					sqWave = 0;
 				}
 			break;
 			case 3:
-				cpuState = 0;			//CPU off
+				cpuState = 0;			//CPU step
 				fastClockControl(clockOff);				//Fast clock OFF
 				PORTE |= 0x04;					//Wait state
 				delay(10);
+				drawBus();
 				PORTE &= 0xFB;
 				//OLEDsetXY(8, 2);
-				OLEDtextXY(8, 2, F("RESUME"));	
+				OLEDtextXY(8, 2, F("RESUME"));
+				drawWave();
+
 			break;
 			case 4:
-			
+
 			break;
 			case 5:
 
@@ -793,6 +806,42 @@ void drawRAMcontents() {
 
 }
 
+void drawBus() {
+
+	OLEDsetXY(72, 7);
+	drawHexByte(byteIn());						//Draw data bus
+	OLEDchar(0);								//Draw a space							
+	drawHexByte(readBusExpander(0x21));			//Get and draw address high byte
+	drawHexByte(readBusExpander(0x20));			//Get and draw address high byte
+	
+}
+
+void drawWave() {
+
+	if (sqWave > 96) {
+		sqWave = 0;
+		OLEDsetXY(sqWave, 1);
+		OLEDfillLine(13, 0x80);			//Draw a line across row 1 (up to logo)
+	}
+
+	OLEDsetXY(sqWave, 1);
+		
+	Wire.beginTransmission(_i2caddr);
+	Wire.write(0x40);
+
+	Wire.write(0x80); 	
+	Wire.write(0x80); 	
+	Wire.write(0xF0); 	
+	Wire.write(0x10); 	
+	Wire.write(0x10); 	
+	Wire.write(0xF0);
+		
+	Wire.endTransmission();		
+
+	sqWave += 6;		
+	
+}
+
 void drawFiles() {
 
 	for (int x = 2 ; x < 7 ; x++) {
@@ -979,6 +1028,53 @@ void streamLoad() {
 	fastClockControl(clockOn);				//Fast clock ON;		
 	startZ80();	
 
+}
+
+void RAMclear() {
+
+	requestBus();
+
+	fastClockControl(clockOff);				//Fast clock OFF;
+	
+	OLEDeraseMenu();
+	OLEDtextXY(3 << 3, 0, F("LOADING"));
+
+	memoryControl(1);			//Take control of memory
+	dataOut();	//Assert bus
+	uint16_t errors = 0;
+	addressControlType(addressControl);
+
+	progressBar = 0;
+	progressBarX = 0;
+		
+	uint16_t memPointer = loadStart;							//Starting address
+	
+	progressBarTicks = 65535/104;
+	
+	while(memPointer < 65534) {
+
+		if ((memPointer & 0x00FF) == 0) {							//Start of page? Assert page #. This reduces I2C access time
+			addressAssertHalf(0x21, memPointer >> 8);			//Set high byte page #
+			//Serial.print("Loading page ");
+			//Serial.println(memPointer >> 8);
+		}
+
+		addressAssertHalf(0x20, memPointer++ & 0xFF);			//Set low byte #		
+
+	
+		dataOut();	//Assert bus
+		byteOut(0);										//Assert data
+		digitalWrite(z80WR, 0);		//Strobe the write		
+		delayMicroseconds(2);			
+		digitalWrite(z80WR, 1);
+		delayMicroseconds(2);
+	
+		if (progressBar++ == progressBarTicks) {			//Update progress bar
+			drawProgressBar();		
+		}
+	
+	}	
+	
 }
 
 void RAMdump() {
