@@ -36,6 +36,12 @@
 #define clockOn			B10000010
 #define clockOff		0x00
 
+#define speed1MHZ			0
+#define speed2MHZ			1
+#define speed4MHZ			2
+#define speed6MHZ			3
+#define speed8MHZ			4
+
 uint8_t serialFlag = 0;
 
 char ourByte = 0;
@@ -61,7 +67,7 @@ uint16_t progressBarTicks;					//How many bytes must be read for the progress ba
 uint8_t cursorStatus = 1;					//If cursor is on or not
 uint16_t blink;								//For to blink da cursor
 
-uint16_t viewPointer = 0;
+uint16_t viewPointer = 0;					//Pointer for RAM viewer
 uint16_t loadStart = 0x0000;				//Starting point in memory for copying SD files into
 uint16_t dumpRange[] = {0x0000, 0x1FFF};	//Range for dumping RAM to SD
 uint16_t pointerJump = 2048;				//How much the pointer moves when you change it
@@ -85,6 +91,12 @@ uint8_t firstFile = 0;				//The first file we should display (if we scroll past 
 uint8_t BASICtype = 0;				//Flag if we're having the MCU type in BASIC commands such as RUN (to start a game without keyboard for instance)
 
 uint8_t textSize = 0;				//0 = small 1 = large
+
+uint8_t z80speedMultipler;			//Stores the current speed (0-4, see clockPrint for the MHZ values)
+
+uint8_t clockPrint[] =  {17, 18, 20};			//For printing out the speed on the display 1, 2, 4, 6 and 8 MHZ
+uint8_t clockTimerA[] = {16, 8, 4};
+uint8_t clockTimerB[] = {24, 12, 6};
 
 void setup() {
 
@@ -113,8 +125,9 @@ void setup() {
 
 	//Z80 Clock Driver
 	pinMode(13, OUTPUT);			//Set PWM pin as output_iterator
-	OCR4A = 4;						//Setup high speed fast clock to drive Z80
-	OCR4C = 6;
+	setZ80speed(speed4MHZ);					//Setup high speed fast clock to drive Z80
+	//OCR4A = 4;						//Setup high speed fast clock to drive Z80
+	//OCR4C = 6;
 	PLLFRQ = B01111010;
 	TCCR4B = B00000001;
 	fastClockControl(clockOn);					//TCCR4A = B10000010;
@@ -260,11 +273,11 @@ void loop() {
 
 	}
 	
-	if (BASICtype) {
+	if (BASICtype and !serialFlag) {				//An internal command "typed" from the menu
 	
 		ourByte = fileName[BASICtype++];
 		
-		if (ourByte) {
+		if (ourByte) {						//Character still present? Flag Z80
 			serialFlag = 1;					//Won't re-trigger until Z80 handles this
 			DDRF |= (1 << 1);   			//Turn this pin into an OUTPUT to pull IRQ low			
 		}
@@ -350,7 +363,7 @@ void BASICmenu() {
 				BASICcommand("RUN");	
 			break;
 			case 5:
-				fileName[1] = 13;		//Break (cntrl-C)	
+				fileName[1] = 3;		//Break (cntrl-C)	
 			break;	
 			case 6:
 				BASICcommand("LIST");
@@ -491,7 +504,6 @@ void RAMDUMPMenu() {
 	if (menuY > 5) {
 		menuLeftRight = 0;
 		
-
 		if (dpadCheck(joyLeft)) {
 			dumpRange[menuY - 6] -= pointerJump;
 		}
@@ -526,7 +538,7 @@ void RAMviewerMenu() {
 
 		whichMenu &= 0x7F;				//AND off the MSB
 
-		viewPointer = 0x0000;
+		//viewPointer = 0x0000;
 		
 		drawRAMcontents();
 	}	
@@ -566,7 +578,7 @@ void CPUcontrolMenu() {
 		//OLEDsetXY(8, 3);
 		OLEDtextXY(8, 3, F("STEP"));
 		//OLEDsetXY(8, 4);
-		OLEDtextXY(8, 6, F("SPEED 4MHZ"));
+		OLEDtextXY(8, 6, F("SPEED 0MHZ"));
 
 		sqWave = 0;
 	
@@ -574,6 +586,9 @@ void CPUcontrolMenu() {
 	
 	standardMenuCursor();
 	drawBus();
+
+	OLEDsetXY(56, 6);
+	OLEDchar(clockPrint[z80speedMultipler]);
 	
 	if (dpadCheck(joyA)) {			//Execute a CPU control command
 		switch(menuY) {
@@ -620,6 +635,22 @@ void CPUcontrolMenu() {
 		}
 		
 	}
+	
+	if (menuY == 6) {
+		menuLeftRight = 0;
+		
+
+		if (dpadCheck(joyLeft) and z80speedMultipler > 0) {
+			setZ80speed(z80speedMultipler - 1);
+		}
+		
+		if (dpadCheck(joyRight) and z80speedMultipler < 2) {
+			setZ80speed(z80speedMultipler + 1);		
+		}
+	}
+	else {
+		menuLeftRight = 1;
+	}	
 	
 }
 
@@ -1498,6 +1529,22 @@ void addressControlType(uint8_t whichType) {	//Changes the input/output state of
 void fastClockControl(uint8_t theStatus) {
 	
 	TCCR4A = theStatus;
+	
+}
+
+void setZ80speed(uint8_t whatSpeed) {
+
+	fastClockControl(clockOff);							//Stop the clock while changing speed
+
+	OCR4A = clockTimerA[whatSpeed];						//Setup high speed fast clock to drive Z80
+	OCR4C = clockTimerB[whatSpeed];	
+
+	z80speedMultipler = whatSpeed;
+
+	TCNT4 = 0;
+
+	fastClockControl(clockOn);							//Resume clock
+
 	
 }
 
